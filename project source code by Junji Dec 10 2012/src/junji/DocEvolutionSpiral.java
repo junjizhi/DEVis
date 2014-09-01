@@ -1,0 +1,937 @@
+package junji;
+import junji.ExcelDataReader;
+import g4p_controls.*;
+import junji.Log;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.text.*;
+
+import processing.core.PApplet;
+import processing.core.PImage;
+import java.awt.event.*;
+
+
+
+import kevin.util.DateUtil;
+
+public class DocEvolutionSpiral extends PApplet {
+	
+	private static final long serialVersionUID = 1234672323L;
+	private static final int Default_Window_Width = 600;
+	private static final int Default_Window_Height = 600;
+	
+	private static final String setupFilePath = "..\\setup.txt";
+	private int ChangedWordColor;
+	private int AddedWordColor;
+	private int DeletedWordColor; 
+	private int SpiralLineColor;
+	private String DocXclsFilePath =null;
+	
+	private float r = 0;
+	private float theta = 0;
+
+	private float thetaspeed;
+	private float rspeed ;
+	
+	//for scrolling 
+	private int x_delta =0, y_delta = 0;
+	
+	//flag for update the curve and parameters about the line centres. 
+	private boolean CurveUpdated = false;
+	
+	final public static int stroke_weight_min = 3;
+	final public static int stroke_weight_max = 20;
+	final public static int stroke_weight_base = 200;
+	
+	//this point list is save the points that w
+	private List<Point>  savedPieCentreList = new ArrayList<Point>();
+	private List<Integer> pieDiameterList = new ArrayList<Integer>();
+	private List<Point>  savedLineCentreList = new ArrayList<Point>();	//for interaction purpose
+	
+	private int dataSize; 		//how many rows to read
+	//sample data
+	private Log data[] = null;
+	
+	private float textLeading;	//display text leading
+	
+	private float scaler = 1;
+	
+	private boolean dataInit = false;
+	
+	private int windowWidth = Default_Window_Width, windowHeight = Default_Window_Height;
+	
+	private GWindow opPieWindow, searchWindow, compareWindow, compareResultWindow;
+	
+	private void initData()
+	{
+		ExcelDataReader rd = new ExcelDataReader(DocXclsFilePath,dataSize);
+			
+		for(int i=0; i<dataSize; i++)
+				data[i] = rd.nextLog();
+	}
+		
+
+	public void setup() {
+	 //read the setup file. all parameters in setup files will be read into the file
+	 //readSetupFile() must be called before setupScreen() because it needs to initialize 
+	 //the value of textLeading
+	  readSetupFile();
+	  setupScreen();
+	  
+	  addMouseWheelListener(new MouseWheelListener() { 
+		    public void mouseWheelMoved(MouseWheelEvent mwe) { 
+		      mouseWheel(mwe.getWheelRotation());
+		  }}); 
+	  
+	}
+
+	
+	public void createPieWindow(float addPercent, float changePercent, float deletePercent, Date d) {
+		opPieWindow = new GWindow(this, "Operation Pie", 70+220, 150, 600, 600, false, JAVA2D);
+		opPieWindow.setBackground(255);
+		opPieWindow.addDrawHandler(this, "operationPieWindowDraw");
+		
+		PieWinData data = new PieWinData();
+		data.addPercent = addPercent;
+		data.changePercent = changePercent;
+		data.deletePercent =deletePercent;
+		data.date = d;
+		opPieWindow.addData(data);
+	}
+	
+	public void operationPieWindowDraw(GWinApplet appc, GWinData data) {
+		PieWinData data2 = (PieWinData)data;
+		
+		DecimalFormat formatter = new DecimalFormat("0");
+		 //draw add words			  
+		appc.fill(this.AddedWordColor);
+		appc.arc(appc.width/2,appc.height/2,200,200,0,data2.addPercent*TWO_PI);
+		appc.rect(40, 40, 20, 20);		
+		
+		appc.fill(this.ChangedWordColor);
+		appc.arc(appc.width/2,appc.height/2,200,200,data2.addPercent*TWO_PI, 
+				data2.addPercent*TWO_PI+data2.changePercent*TWO_PI);
+		appc.rect(40, 80, 20, 20);
+		
+		appc.fill(this.DeletedWordColor);
+		appc.arc(appc.width/2,appc.height/2,200,200,
+				data2.addPercent*TWO_PI+data2.changePercent*TWO_PI,TWO_PI);
+		appc.rect(40, 120, 20, 20);
+		
+		String str ="Added: ";
+		str += formatter.format(data2.addPercent*100);
+		str += "%";
+		appc.text(str, 70, 55);
+		
+		str ="Changed: ";
+		str += formatter.format(data2.changePercent*100);
+		str += "%";
+		appc.text(str, 70, 95);
+		
+		str ="Deleted: ";
+		str += formatter.format(data2.deletePercent*100);
+		str += "%";
+		appc.text(str, 70, 135);
+		
+		Calendar cal = Calendar.getInstance();
+		cal.setTime(data2.date);
+		str = DateUtil.getCalStr(cal);
+		
+		appc.text("Time:", 30, 175);
+		appc.text(str, 80, 175);
+	}
+	
+	private void mouseWheel(int delta) {
+//		  println("mouse has moved by " + delta + " units."); 
+		  this.y_delta += delta;
+		  CurveUpdated = false;
+		}
+	
+	private void setupScreen() {
+		size(windowWidth,windowHeight);
+		background(255);
+		smooth();
+		  
+		// Create the font
+	    textFont(createFont("Georgia", 16));
+		textLeading(textLeading);
+	}
+
+
+	private void readSetupFile() {
+		//read the setup file and prepare all the parameters
+		SetupFileReader sfr = SetupFileReader.getSetupFileReader(setupFilePath);
+		dataSize = sfr.getLogNumToRead();
+		data= new Log[dataSize];
+		textLeading  = sfr.getTextLeading();
+		
+		this.ChangedWordColor = convertColorToInt(sfr.getChangedWordColor());
+		this.AddedWordColor = convertColorToInt(sfr.getAddedWordColor());
+		this.DeletedWordColor = convertColorToInt(sfr.getDeletedWordColor());
+		
+		this.SpiralLineColor = convertColorToInt(sfr.getSpiralLineColor());
+		
+		thetaspeed = sfr.getThetaspeed();
+		rspeed = sfr.getRspeed();
+		
+		this.DocXclsFilePath = sfr.getDocXclsFilePath();
+	}
+
+	private int convertColorToInt(Color c) {
+		return super.color(c.getR(),c.getG(),c.getB());
+	}
+
+
+	public void draw()
+	{
+		
+		if(!CurveUpdated)
+		{
+			
+		  changeScale();		
+		  resetSpiralParameters();
+	  
+		  background(255);	//repaint the background with white color
+		  updateCurve();
+		  CurveUpdated =true;
+	  }
+       
+	  updateTextDisplay();
+	  
+	}
+	
+	private void changeScale() 
+	{		
+		translate(width/2,height/2); // use translate around scale
+		 scale(scaler);
+		 
+		 translate(-width/2,-height/2); // to scale from the center
+	}
+
+
+	private void resetSpiralParameters() {
+		  r = 0;
+		  theta = 0;
+		  
+		  
+		  savedPieCentreList.clear();
+		  pieDiameterList.clear();
+		  savedLineCentreList.clear();
+
+		  responseRadiusTheshold/=scaler;
+		  
+		  //need to initialize the all the line text
+		  bInitTextList = false;
+	}
+
+	private boolean bInitTextList = false;
+	
+	  private void updateTextDisplay() 
+	  {
+		if(!bInitTextList)
+		{
+			bInitTextList = true;
+			initTextList();
+		}
+		 updateLineText();
+		 updatePieText();
+	}
+
+	private void updatePieText() 
+	{
+		int areaIndex = getPieAreaIndex(mouseX, mouseY);
+		
+		if(areaIndex!=-1)
+		{	
+			for(int i=0; i<dataSize; ++i)
+				{
+					if(i==areaIndex)
+						displayText(pieTexts[i]);
+					else
+						hideText(pieTexts[i]);
+					}
+				}
+	}
+
+
+	private int getPieAreaIndex(int mouseX, int mouseY) {
+	
+		int i = 0;
+		for(Point p: this.savedPieCentreList)
+		{
+			if(p.distance(mouseX,mouseY)<=(pieDiameterList.get(i))/2)	//radius == diameter/2
+				return i;
+			i++;
+		}
+		
+		//if not found return -1
+		if(i==dataSize)
+			i = -1;
+		
+		return i;
+	}
+
+
+	private void updateLineText()
+	{
+		// see which area is the mouse in, the index of the area is the same as in data 
+		//index and savedLineCentreList
+		int areaIndex = getLineAreaIndex(mouseX, mouseY);
+				
+		if(areaIndex!=-1)
+		{	
+			for(int i=0; i<dataSize; ++i)
+				{
+					if(i==areaIndex)
+							displayText(lineTexts[i]);
+					else
+							hideText(lineTexts[i]);
+					}
+				}
+	}
+	  
+    private TextToDisplay [] lineTexts= null;
+    private TextToDisplay [] pieTexts= null;
+	  
+	private void initTextList() {
+		
+		initLineTextList();
+		initPieTextList();
+		
+	}
+
+	private void initLineTextList() {
+		int nPoints = dataSize;
+		lineTexts = new TextToDisplay [nPoints];
+		for(int i=0; i<nPoints; ++i)
+		{
+			String message = ""+data[i].getNumOfVisit()+" visits, "+data[i].getDaysToLast()+" days";
+			lineTexts[i] = new TextToDisplay(message, this.savedLineCentreList.get(i).getX(), 
+					savedLineCentreList.get(i).getY(),
+					textWidth(message),textLeading,textAscent(),textDescent());
+		}
+	}
+	
+	private void initPieTextList(){
+		int nPoints = dataSize;
+		pieTexts = new TextToDisplay [nPoints];
+		
+		for(int i=0; i<nPoints; ++i)
+		{
+			String message = getTextMessageFromData(i);
+			pieTexts[i] = new TextToDisplay(message, this.savedPieCentreList.get(i).getX(), 
+					savedPieCentreList.get(i).getY(), textWidth(message),textLeading,textAscent(),textDescent(),
+					3); // 3 lines of text
+			pieTexts[i].setColor(18, 34, 196);
+		}
+	}
+
+	private String getTextMessageFromData(int dataIndex) {
+		DecimalFormat formatter = new DecimalFormat("0");
+		
+		String str = "";
+		str +="Change: ";
+		str += formatter.format(data[dataIndex].getChangeWordPercentage()*100);
+		str += "%\n";
+		
+		str +="Add: ";
+		str += formatter.format(data[dataIndex].getAddWordPercentage()*100);
+		str += "%\n";
+		
+		str +="Delete: ";
+		str += formatter.format(data[dataIndex].getDeleteWordPercentage()*100);
+		str += "%";
+		return str;
+	}
+
+	private float responseRadiusTheshold = 20; 
+	private int getLineAreaIndex(int mouseX, int mouseY) {
+		
+		int i = 0;
+		for(Point p: this.savedLineCentreList)
+		{
+			if(p.distance(mouseX,mouseY)<=responseRadiusTheshold)
+			{
+//				print("MouseX: "+mouseX+" mouseY: "+mouseY+"\n");
+//				print("pointX: "+p.getX()+" pointY: "+p.getY()+"\n");
+//				print("i="+i+"\n");
+				return i;
+			}
+			i++;
+		}
+		
+		//if not found return -1
+		if(i==dataSize)
+			i = -1;
+		
+		return i;
+	}
+
+
+	  
+
+	//by default, the weight is set to be 8, the color is set (0,0,0);
+	  
+	 void drawSpiralCurve(int length)
+	 {
+		 drawSpiralCurve(length,8,super.color(0,0,0));
+	 }
+	  
+	void drawSpiralCurve(int length, int diameter, int color) {
+
+	int iteration = 0; 
+	
+	int loopTimes= length/3;
+	
+	  while( iteration <loopTimes)
+	  {
+	  
+		  // Polar to Cartesian conversion
+		  float x = r * cos(theta)+this.x_delta;
+		  float y = r * sin(theta)+this.y_delta;
+		  
+//		  println("y_delta_"+y_delta);
+		  
+		  //when the iteration reaches half the loopTimes, store that coordinate, for interaction use
+		  if(iteration==loopTimes/2)
+			  saveLineCentre((x+width/2)*scaler,(y+height/2)*scaler);
+	  
+		  noStroke();
+		  fill(color);
+		  // Adjust for center of window
+		  ellipse(x+width/2, y+height/2, diameter, diameter); 
+
+		  theta = theta + thetaspeed;
+	  	  r = r + rspeed;
+	  	  iteration++;
+	  }
+	}
+
+	private void saveLineCentre(float x, float y) {
+
+		this.savedLineCentreList.add(new Point(x,y));
+	}
+
+	
+	//determine the correspondence between the length of spiral and the length of time
+	//1 day -> 100 iterations in the spiral curve
+			
+	//draw next curve (according to the correspondence)
+	//set weight to the according to visit number 
+	//temp weight is visit number / 100
+	//draw a circle, set diameter propotional to the change size 
+	//then add word, del word, change of work, according to their percentage. 
+	
+	
+	void updateCurve()
+	{
+		if(!this.dataInit)
+		{
+			initData();
+			dataInit = true;
+		}
+	  
+	  for(Log l: data)
+	  {
+		  //save the starting point first
+		  saveCurveEndPointXY();
+		  
+		  long dayDuration = l.getDaysToLast();
+		  int numOfVisit = l.getNumOfVisit();
+		  
+		  int diameter = calculateStrokeWeight(numOfVisit);
+		  pieDiameterList.add(diameter);
+		  
+		  this.drawSpiralCurve((int)dayDuration*10, diameter, this.SpiralLineColor);
+	  }
+	  
+	  drawOperationPie(pieDiameterList);
+	  
+	}
+	
+	private void drawOperationPie( List<Integer> pieDiameterList) {
+		  //draw all the operation pie circle
+		  int i = 0;
+		  for(Log l: data)
+		  {
+			  Point p = savedPieCentreList.get(i);
+			  int curWeight = pieDiameterList.get(i);
+			 
+			  int sumOfChangedWords = l.getAddWordCnt() + l.getChangeWordCnt() + l.getDeleteWordCnt();		  
+			  
+			  int maxWordCnt = max(l.getAddWordCnt() ,l.getChangeWordCnt(),l.getDeleteWordCnt());
+			 
+			  int ellipseRadius = calculateEllipseWeight(sumOfChangedWords, 85000);
+			  
+			  
+			  //constrain the radius
+			  int whiteCircleRadius = ellipseRadius < curWeight?curWeight:ellipseRadius; 
+			  //draw a white circle first to remove the original weight
+			  fill(255);
+			  ellipse(p.getX(),p.getY(),whiteCircleRadius,whiteCircleRadius);
+				
+			  
+			  
+			  //draw add words
+			  float additionEllipseRadius =  calculateRadius(l.getAddWordCnt(),maxWordCnt, ellipseRadius);
+					  
+					  
+			  fill(this.AddedWordColor);
+			  arc(p.getX(),p.getY(),additionEllipseRadius,additionEllipseRadius,0, l.getAddWordPercentage()*TWO_PI);
+			  
+			  
+			  float changeEllipseRadius = calculateRadius(l.getChangeWordCnt(),maxWordCnt, ellipseRadius);
+			  //draw changed words
+			  fill(this.ChangedWordColor);
+			  arc(p.getX(),p.getY(),changeEllipseRadius,changeEllipseRadius,
+					  l.getAddWordPercentage()*TWO_PI, 
+					  l.getAddWordPercentage()*TWO_PI+l.getChangeWordPercentage()*TWO_PI
+					 );
+			  
+			  float deletionEllipseRadius = calculateRadius(l.getDeleteWordCnt(),maxWordCnt, ellipseRadius);
+			  //draw deletion of words
+			  fill(this.DeletedWordColor);
+			  arc(p.getX(),p.getY(),deletionEllipseRadius,deletionEllipseRadius,
+					  l.getAddWordPercentage()*TWO_PI+l.getChangeWordPercentage()*TWO_PI,
+					  TWO_PI
+					 );
+			  
+			  i++;
+		  }
+}
+
+
+	private float calculateRadius(int addWordCnt, int maxWordCnt,
+			int ellipseRadius) {
+		
+		float base_radius = 30;
+		
+		base_radius = base_radius<ellipseRadius?base_radius: ellipseRadius*0.8f;
+		
+		float ret = (float) addWordCnt / (float)maxWordCnt * ellipseRadius;
+		
+		ret = ret<base_radius?base_radius:ret;
+		return ret;
+	}
+
+
+	
+	
+	final int ellipse_weight_max = 18;
+	final int ellipseWeightMin = 15;
+	private int calculateEllipseWeight(int hugeWeight, int baseWeight)
+	{
+		return ellipseWeightMin+(int)((float)hugeWeight/(float)baseWeight*(float)ellipse_weight_max);
+	}
+	
+	private void saveCurveEndPointXY() {
+		//save the current x, y
+		savedPieCentreList.add(new Point(getCurrentX(),getCurrentY()));
+	}
+
+
+	private int calculateStrokeWeight(int numOfVisit) {
+
+		
+		return stroke_weight_min+(int)((float)numOfVisit/(float)stroke_weight_base*(float)stroke_weight_max);
+		
+	}
+
+
+	private float getCurrentX()
+	{
+		return  r * cos(theta)+width/2+this.x_delta;
+	}
+
+	private float getCurrentY()
+	{
+		return  r * sin(theta)+height/2+this.y_delta;
+	}
+	
+
+	public void mousePressed()
+	{
+//		println("mouse pressed");
+		int areaIndex = getPieAreaIndex(mouseX, mouseY);
+		
+		if(areaIndex!=-1)
+		{	
+			println(data[areaIndex]);
+			createPieWindow(data[areaIndex].getAddWordPercentage(), 
+					data[areaIndex].getChangeWordPercentage(), 
+					data[areaIndex].getDeleteWordPercentage(), data[areaIndex].getDate());
+		}
+	}
+	public void keyPressed() {
+		if (key == 'z') {
+			scaler -= 0.4;
+			this.CurveUpdated =false;
+		} // smaller
+		if (key == 'x') 
+		{
+			scaler += 0.4;
+			this.CurveUpdated =false;
+			
+		} // bigger
+		if (key == 'c') {
+//			println("pressed c");
+			scaler = 1;
+			this.x_delta = 0;
+			this.y_delta = 0;
+			this.CurveUpdated =false;
+		} // reset scale
+		if (key == 'f') {
+			
+			createSearchWindow();
+		}
+		if (key == 'p') {
+			
+			createCompareWindow();
+		}
+		
+		
+		if(key==CODED)
+		{
+		if(keyCode ==UP)
+		{
+//			println("upupupp");
+			this.y_delta --;
+			this.CurveUpdated =false;
+		}
+		if(keyCode ==DOWN)
+		{
+			this.y_delta ++;
+			this.CurveUpdated =false;
+		}
+		if(keyCode ==LEFT)
+		{
+			this.x_delta --;
+			this.CurveUpdated =false;
+		}
+		if(keyCode ==RIGHT)
+		{
+			this.x_delta ++;
+			this.CurveUpdated =false;
+		}
+		}
+	}
+	
+	GTextField compTx1, compTx2;
+	 boolean bInitCompareTextFieldAndButton = false;
+	 GButton compareButton;
+	 
+	private void createCompareWindow() {
+		
+		compareWindow = new  GWindow(this, "Compare two operations", 70+220, 150, 300, 200, false, JAVA2D);
+		compareWindow.setBackground(255);
+		compareWindow.addDrawHandler(this, "compareWindowDraw");
+	}
+
+	public void compareWindowDraw(GWinApplet appc, GWinData data){
+
+		if(!bInitCompareTextFieldAndButton)
+		{
+			compTx1 = new GTextField(appc, 10, 10, 200, 20);
+			compTx1.tag = "compTx1";
+			compTx1.setDefaultText("Operation Index 1-"+dataSize);
+			compTx1.setVisible(true);
+			 
+			compTx2 = new GTextField(appc, 10, 30, 200, 20);
+			compTx2.tag = "compTx1";
+			compTx2.setDefaultText("Operation Index 1-"+dataSize);
+			compTx2.setVisible(true);
+			
+			compareButton = new GButton(appc, 10, 54, 100, 20, "Compare");
+			compareButton.tag = "Compare";
+			
+			if(tt==null)
+				tt = new GTabManager();
+			 tt.addControls(compTx1);
+			 tt.addControls(compTx2);
+			 
+			 bInitCompareTextFieldAndButton = true;
+		}
+	}
+	
+
+	private void createSearchWindow() {
+
+		searchWindow = new  GWindow(this, "Search an operation record", 70+220, 150, 300, 200, false, JAVA2D);
+		searchWindow.setBackground(255);
+		searchWindow.addDrawHandler(this, "searchWindowDraw");
+	}
+	GTextField txf1;
+	 GTabManager tt;
+	 boolean bInitTextFieldAndButton = false;
+	 GButton searchButton;
+	public void searchWindowDraw(GWinApplet appc, GWinData data){
+		
+		if(!bInitTextFieldAndButton)
+		{
+			 txf1 = new GTextField(appc, 10, 10, 200, 20);
+			 txf1.tag = "txf1";
+			 txf1.setDefaultText("Please Enter a date(e.g., 20100312)");
+			 txf1.setVisible(true);
+			 bInitTextFieldAndButton = true;
+			 tt = new GTabManager();
+			 tt.addControls(txf1);
+			 
+			 searchButton = new GButton(appc, 10, 34, 100, 20, "Search");
+			 searchButton.tag = "Search";
+		}
+
+	}
+	
+	public void handleTextEvents(GEditableTextControl tc, GEvent event) { 
+//		println("Editing the text field");
+	}
+
+	public void handleButtonEvents(GButton button, GEvent event) {
+//		println("Button event!");
+		if(button.tag == "Search")
+		{
+		String searchText = txf1.getText();
+		println("searching: "+searchText);
+		
+		Date searchDate;
+		try {
+			searchDate = new SimpleDateFormat("yyyyMMdd").parse(searchText);
+			int retI = getDateIndex(searchDate);
+			
+			if(retI!=-1)
+			{
+				this.createPieWindow(data[retI].getAddWordPercentage(), 
+						data[retI].getChangeWordPercentage(), 
+						data[retI].getDeleteWordPercentage(), 
+						data[retI].getDate());
+			}
+			else
+			{
+				println("Search Not found!");
+			}
+				
+		} catch (ParseException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			createErrorWindow();
+		}
+		}
+		
+		if(button.tag == "Compare")
+		{
+		
+			String comTextField1, comTextField2;
+			comTextField1 = compTx1.getText();
+			comTextField2 = compTx2.getText();
+			
+			println("Comparing the two: "+comTextField1+" and "+comTextField2);
+			
+			int i1 = Integer.parseInt(comTextField1);
+			int i2 = Integer.parseInt(comTextField2);
+			
+			displayCompareWindow(i1,i2);
+		}
+		
+	}
+	
+	
+	//i1 and i2 are two data index
+	private void displayCompareWindow(int i1, int i2) {
+		// TODO Auto-generated method stub
+		compareResultWindow = new GWindow(this, "Compare result window", 70+220, 150, 600, 600, false, JAVA2D);
+		compareResultWindow.setBackground(255);
+		compareResultWindow.addDrawHandler(this, "compareResultWindowDraw");
+		
+		CompareResultWinData wdata = new CompareResultWinData();
+		wdata.log1 = data[i1];
+		wdata.log2 = data[i2];
+		compareResultWindow.addData(wdata);
+	}
+
+	private float getCompPieRadius(int wordsCnt)
+	{
+		//base 
+		int wordbase = 25000;
+		
+		//radius 300 to 50
+		float maxRadius = 200, minRadius = 50; 
+		
+		float r = minRadius + (maxRadius-minRadius)*wordsCnt/wordbase;
+		
+		return r;
+	}
+	
+	public void compareResultWindowDraw(GWinApplet appc, GWinData data1) {
+		
+		
+		
+		CompareResultWinData data2 = (CompareResultWinData)data1;
+		
+		DecimalFormat formatter = new DecimalFormat("0");
+		
+		float r; 
+		 //draw add words			  
+		appc.fill(this.AddedWordColor);
+		r = getCompPieRadius(data2.log1.getAddWordCnt());
+		appc.arc(appc.width/2,appc.height/2,r,r,0+PI/2,
+					data2.log1.getAddWordPercentage()*PI+PI/2);
+		appc.rect(40, 40, 20, 20);		
+		
+		appc.fill(this.ChangedWordColor);
+		r = getCompPieRadius(data2.log1.getChangeWordCnt());
+		appc.arc(appc.width/2,appc.height/2,r,r,data2.log1.getAddWordPercentage()*PI+PI/2, 
+				data2.log1.getAddWordPercentage()*PI+data2.log1.getChangeWordPercentage()*PI+PI/2);
+		appc.rect(40, 80, 20, 20);
+		
+		
+		appc.fill(this.DeletedWordColor);
+		r = getCompPieRadius(data2.log1.getDeleteWordCnt());
+		appc.arc(appc.width/2,appc.height/2,r,r,
+				data2.log1.getAddWordPercentage()*PI+data2.log1.getChangeWordPercentage()*PI+PI/2,PI+PI/2);
+		appc.rect(40, 120, 20, 20);
+		
+		String str ="Added: ";
+		str += formatter.format(data2.log1.getAddWordPercentage()*100);
+		str += "%  ";
+		appc.text(str, 70, 55);
+		
+		str ="Changed: ";
+		str += formatter.format(data2.log1.getChangeWordPercentage()*100);
+		str += "%";
+		appc.text(str, 70, 95);
+		
+		str ="Deleted: ";
+		str += formatter.format(data2.log1.getDeleteWordPercentage()*100);
+		str += "%";
+		appc.text(str, 70, 135);
+		
+		Calendar cal = Calendar.getInstance();
+		cal.setTime(data2.log1.getDate());
+		str = DateUtil.getCalStr(cal);
+		
+		appc.text("Time:", 30, 175);
+		appc.text(str, 80, 175);
+		
+		
+		
+		
+		
+	
+		
+		 //draw another half of the pie		  
+		appc.fill(this.DeletedWordColor);
+		r = getCompPieRadius(data2.log2.getDeleteWordCnt());
+		
+		appc.arc(appc.width/2,appc.height/2,r,r,0+PI*3/2,
+					data2.log2.getDeleteWordPercentage()*PI+PI*3/2);
+		appc.rect(440, 120, 20, 20);		
+		
+		appc.fill(this.ChangedWordColor);
+		r = getCompPieRadius(data2.log2.getChangeWordCnt());
+		appc.arc(appc.width/2,appc.height/2,r,r,data2.log2.getDeleteWordPercentage()*PI+PI*3/2, 
+				data2.log2.getDeleteWordPercentage()*PI+data2.log2.getChangeWordPercentage()*PI+PI*3/2);
+		appc.rect(440, 80, 20, 20);
+		
+		appc.fill(this.AddedWordColor);
+		r = getCompPieRadius(data2.log2.getAddWordCnt());
+		appc.arc(appc.width/2,appc.height/2,r,r,
+				data2.log2.getDeleteWordPercentage()*PI+data2.log2.getChangeWordPercentage()*PI+PI*3/2,PI+PI*3/2);
+		appc.rect(440, 40, 20, 20);
+		
+		
+		appc.fill(this.DeletedWordColor);
+		str ="Added: ";
+		str += formatter.format(data2.log2.getAddWordPercentage()*100);
+		str += "%";
+		appc.text(str, 470, 55);
+		
+		str ="Changed: ";
+		str += formatter.format(data2.log2.getChangeWordPercentage()*100);
+		str += "%";
+		appc.text(str, 470, 95);
+		
+		str ="Deleted: ";
+		str += formatter.format(data2.log2.getDeleteWordPercentage()*100);
+		str += "%";
+		appc.text(str, 470, 135);
+		
+		cal = Calendar.getInstance();
+		cal.setTime(data2.log2.getDate());
+		str = DateUtil.getCalStr(cal);
+		
+		appc.text("Time:", 430-10, 175);
+		appc.text(str, 480-10, 175);
+		
+		appc.fill(0);
+		appc.line(appc.width/2,50, appc.width/2,600-50);
+	}
+
+	private int getDateIndex(Date searchDate) {
+		// TODO Auto-generated method stub
+		int i;
+		
+		for(i=0; i<this.dataSize-1; ++i)
+		{
+			Date d1 = data[i].getDate();
+			Date d2 = data[i+1].getDate();
+			if(d1.before(searchDate) && d2.after(searchDate))	
+				break;
+		}
+		
+		if(i==dataSize-1 && searchDate.after(data[i+1].getDate())) return i;
+		
+		return i==dataSize-1?-1:i;
+	}
+
+
+	private void createErrorWindow() {
+		// TODO Auto-generated method stub
+		// to warn the user about the wrong format
+	}
+
+
+	private void displayText(TextToDisplay t)
+	{
+		if(t.isDisplayed())	//if already display, then return
+			return;
+		else
+		{
+			t.setDisplay(true);
+//			//init the piBack
+//			if(!bInitPiBack)
+//			{
+			PImage piBack = get((int)(t.gettPosX()), (int)(t.gettPosY() - t.getTextHeight()), 
+						(int)(min(t.getTextWidth(),width-t.gettPosX())), 
+						(int)(min(height-t.gettPosY(),t.getTtH())));
+//				bInitPiBack = true;
+//			}
+			noStroke();
+			fill(t.gettColorR(), t.gettColorG(),t.gettColorB());
+			text(t.getText(), t.gettPosX(), t.gettPosY());
+		
+			//finally set the piBack for later hidden purpose
+			t.setBackupImage(piBack);
+		}
+	}
+	
+	
+	public void hideText(TextToDisplay t)
+	{
+		if(!t.isDisplayed())	//if not hidden, then return
+			return;
+		else
+		{
+			t.setDisplay(false);
+			int srcWidth = (int)(min(t.getTextWidth(),width-t.gettPosX()));
+			int srcHeight = (int)(min(height-t.gettPosY(),t.getTtH()));
+			
+			copy(t.getBackupImage(), 0, 0,srcWidth , srcHeight,
+					 (int)t.gettPosX(), (int)(t.gettPosY() - t.getTextHeight()),  srcWidth, srcHeight);
+		}
+	}
+	
+	//a class to handle the display text
+}

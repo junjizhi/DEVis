@@ -1,0 +1,9 @@
+DocXclsFilePath ..\data1.xlsx
+logRowsToRead 18
+textLeading 15
+SpiralLineColorRGB 57 152 132
+ChangedWordColorRGB 220 87 18
+AddedWordColorRGB 253 218 4
+DeletedWordColorRGB 35 31 32
+Thetaspeed 0.01
+Rspeed 0.14
